@@ -325,17 +325,7 @@ Wait for the user to reply "Yes" before executing the plan.]
         if not final_response:
             final_response = "Done."
 
-        # Fake typing delay based on message length to make it feel human
-        # Average typing speed: ~20 chars per second on mobile
-        typing_delay = min(len(final_response) / 20.0, 10.0) # max 10 seconds
-        print(f"--> Faking human typing delay for {typing_delay:.1f}s...")
         
-        # Fire one more typing indicator to ensure it stays active during the delay
-        await loop.run_in_executor(None, send_typing_indicator_sync)
-        
-        # Guarantee the typing indicator is visible for at least 2 seconds before instant replies
-        await asyncio.sleep(2.0)
-        await asyncio.sleep(typing_delay)
 
         print(f"--> Replying: {final_response[:50]}...")
 
