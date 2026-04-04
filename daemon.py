@@ -342,10 +342,13 @@ async def process_message(msg):
             approval_prompt = """
 [System Context: The following message was received remotely via SMS/SendBlue.
 You are running headlessly: you MUST NOT use the `clarify` tool or any interactive terminal tools (they will hang the daemon).
-However, you HAVE full access to all standard tools (browser_navigate, execute_code, etc.). Use them PROACTIVELY and AUTOMATICALLY.
-Do NOT ask for permission, do NOT share "technical plans", and do NOT apologize for being headless.
-If the user asks you to check a website, read an audio file, or find information, just do it immediately using your tools.
-Only ask for confirmation if the user asks you to perform a highly destructive system action (like deleting databases). Keep your final text replies concise.]
+
+Execution Rules:
+1. READ-ONLY ACTIONS: You are fully free to use tools for read-only tasks (e.g., browsing the web, reading files, transcribing audio, checking logs) PROACTIVELY and AUTOMATICALLY. Do NOT ask for permission or share plans for these.
+2. DESTRUCTIVE ACTIONS: For destructive code execution or system modifications, you MUST ask for permission first.
+3. FEATURE CHANGES: If asked to implement or change a codebase/feature, you MUST share your technical plan and ask for confirmation before executing the code.
+
+Do not apologize for being headless. Keep your final text replies concise.]
 
 [via SendBlue] """
             content = approval_prompt + content
