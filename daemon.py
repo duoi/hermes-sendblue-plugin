@@ -322,6 +322,13 @@ Wait for the user to reply "Yes" before executing the plan.]
                 output_lines.append(line)
             final_response = "\n".join(output_lines).strip()
             
+        # Always scan STDOUT for media tags since they are not stored in the DB text column
+        for line in stdout.decode().splitlines():
+            clean_line = re.sub(r'\x1B(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])', '', line)
+            if "MEDIA:" in clean_line:
+                final_response += "\n" + clean_line.strip()
+
+            
         if not final_response:
             final_response = "Done."
 
