@@ -424,9 +424,10 @@ Do not apologize for being headless. Keep your final text replies concise.]
         stderr_text = stderr.decode()
         if "Session not found" in stderr_text or "Session not found" in stdout.decode():
             print("--> Session was invalid/deleted. Auto-resetting and retrying...")
-            sf = os.path.expanduser("~/.hermes/sendblue_session.txt")
-            if os.path.exists(sf):
-                os.remove(sf)
+            conn = sqlite3.connect(DB_PATH)
+            conn.execute("DELETE FROM user_sessions WHERE phone_number = ?", (number,))
+            conn.commit()
+            conn.close()
             current_session = get_user_session(number)
             cmd = [
                 get_hermes_bin(),
