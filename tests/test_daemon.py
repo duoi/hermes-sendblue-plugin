@@ -219,6 +219,58 @@ class TestDaemon(unittest.IsolatedAsyncioTestCase):
             call_args_retry = mock_create_subprocess_exec.call_args[0]
             self.assertIn("freshly_generated_fallback_session", call_args_retry)
 
+    @patch("daemon.update_status")
+    async def test_media_download_size_limit(self, mock_update_status):
+        # We need to simulate aiohttp downloading a file that exceeds the size limit
+        msg = {
+            "message_handle": "test_msg_large_media",
+            "content": "",
+            "media_url": "https://example.com/huge.mp4",
+            "from_number": daemon.USER_PHONE,
+        }
+
+        # We need to mock the aiohttp ClientSession to yield chunks
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.content.iter_chunked = MagicMock(
+            return_value=async_generator([b"123456", b"789012"])
+        )
+
+        mock_get_ctx = AsyncMock()
+        mock_get_ctx.__aenter__.return_value = mock_resp
+
+        mock_session_instance = MagicMock()
+        mock_session_instance.get.return_value = mock_get_ctx
+        mock_session_instance.__aenter__.return_value = mock_session_instance
+
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session_instance),
+            patch("daemon.asyncio.create_subprocess_exec") as mock_exec,
+            patch("daemon.send_typing_indicator_sync"),
+        ):
+            # Temporarily set the size limit to 10 bytes
+            original_limit = daemon.MAX_MEDIA_SIZE_BYTES
+            daemon.MAX_MEDIA_SIZE_BYTES = 10
+
+            try:
+                await daemon.process_message(msg)
+
+                # Should not have called subprocess because it failed
+                self.assertFalse(mock_exec.called)
+
+                # Should have completed with error
+                mock_update_status.assert_called_with(
+                    "test_msg_large_media", "failed", "media file too large"
+                )
+            finally:
+                daemon.MAX_MEDIA_SIZE_BYTES = original_limit
+
+
+# Helper for mocking async iterators
+async def async_generator(items):
+    for item in items:
+        yield item
+
 
 if __name__ == "__main__":
     unittest.main()

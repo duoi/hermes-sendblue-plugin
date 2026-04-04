@@ -44,6 +44,10 @@ for path in [env_path, plugin_env_path]:
 API_KEY = os.environ.get("SENDBLUE_API_KEY")
 API_SECRET = os.environ.get("SENDBLUE_API_SECRET")
 USER_PHONE = os.environ.get("USER_PHONE")
+MAX_MEDIA_SIZE_BYTES = (
+    int(os.environ.get("SENDBLUE_MAX_MEDIA_SIZE_MB", 50)) * 1024 * 1024
+)
+
 SENDBLUE_PHONE = os.environ.get("SENDBLUE_PHONE")
 INITIAL_SESSION_ID = os.environ.get("INITIAL_SESSION_ID", "new_session")
 
@@ -322,8 +326,28 @@ async def process_message(msg):
                             media_url.split(".")[-1] if "." in media_url[-5:] else "caf"
                         )
                         fd, temp_path = tempfile.mkstemp(suffix=f".{ext}")
+
+                        downloaded_size = 0
+                        is_too_large = False
+
                         with os.fdopen(fd, "wb") as f:
-                            f.write(await resp.read())
+                            async for chunk in resp.content.iter_chunked(
+                                1024 * 64
+                            ):  # 64KB chunks
+                                downloaded_size += len(chunk)
+                                if downloaded_size > MAX_MEDIA_SIZE_BYTES:
+                                    is_too_large = True
+                                    break
+                                f.write(chunk)
+
+                        if is_too_large:
+                            os.remove(temp_path)
+                            print(
+                                f"--> Media download exceeded size limit ({MAX_MEDIA_SIZE_BYTES} bytes). Aborting."
+                            )
+                            update_status(handle, "failed", "media file too large")
+                            return
+
                         content = f"MEDIA: {temp_path}"
                     else:
                         content = (
