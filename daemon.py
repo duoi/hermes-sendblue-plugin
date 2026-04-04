@@ -310,6 +310,24 @@ Wait for the user to reply "Yes" before executing the plan.]
                 row = c.fetchone()
                 if row and row[0]:
                     final_response = row[0].strip()
+                    
+                # Scan recent tool outputs for media tags
+                c.execute("SELECT content FROM messages WHERE session_id = ? AND role = 'tool' ORDER BY id DESC LIMIT 3", (current_session,))
+                for trow in c.fetchall():
+                    if "MEDIA:" in trow[0]:
+                        try:
+                            # It's JSON, try to extract media_tag
+                            import json
+                            data = json.loads(trow[0])
+                            if "media_tag" in data:
+                                final_response += "\n" + data["media_tag"]
+                                break
+                        except:
+                            # Fallback regex if it's not json
+                            match = re.search(r'MEDIA:[^\s"]+', trow[0])
+                            if match:
+                                final_response += "\n" + match.group(0)
+                                break
                 conn.close()
         except Exception as e:
             print("DB fetch failed:", e)
