@@ -4,7 +4,14 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
 
-import sys
+
+# Helper for mocking async iterators
+async def async_generator(items):
+    for item in items:
+        yield item
+
+
+import sys  # noqa: E402
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -311,11 +318,162 @@ class TestDaemon(unittest.IsolatedAsyncioTestCase):
             finally:
                 daemon.MAX_MEDIA_SIZE_BYTES = original_limit
 
+    @patch("daemon.sqlite3.connect")
+    @patch("daemon.asyncio.create_subprocess_exec")
+    @patch("daemon.MediaUploader")
+    async def test_outbound_media_quiet_mode_extraction(
+        self, mock_uploader_class, mock_exec, mock_sqlite_connect
+    ):
+        """
+        Tests Voice & Media Routing (The Quiet Mode Bug).
 
-# Helper for mocking async iterators
-async def async_generator(items):
-    for item in items:
-        yield item
+        ARCHITECTURAL CONTEXT:
+        Do NOT run Whisper locally; it consumes RAM and duplicates Hermes's native pipeline.
+        Furthermore, when Hermes is run as a subprocess with `-Q` (Quiet Mode), it suppresses
+        `MEDIA:` tags from stdout. The only way to extract generated audio/images to text
+        back to the user is to manually query `~/.hermes/state.db` for the `tool` message
+        generated during that conversational turn. We MUST use `boto3` and private S3/R2
+        buckets for outbound media rather than public URL shorteners.
+        """
+        daemon.set_user_session(daemon.USER_PHONE, "sess_media")
+
+        # Mock Hermes returning normally
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (b"Normal text reply", b"")
+        mock_exec.return_value = mock_proc
+
+        # Mock the state.db query to return a media tool message
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        # the daemon runs three queries: get user id, get media tools, get all non-tool roles
+        # We will configure side_effects to return what it expects.
+
+        def execute_side_effect(query, params=()):
+            if "role = 'assistant'" in query:
+                mock_cur.fetchone.return_value = (10, "Normal text reply")
+            elif "role = 'user'" in query:
+                mock_cur.fetchone.return_value = (5,)  # user message id
+            elif "role = 'tool'" in query:
+                # Return a fake generated image
+                mock_cur.fetchall.return_value = [
+                    ('{"media_tag": "MEDIA: /tmp/generated.png"}',)
+                ]
+            else:
+                mock_cur.fetchone.return_value = None
+            return mock_cur
+
+        mock_cur.execute.side_effect = execute_side_effect
+        mock_conn.cursor.return_value = mock_cur
+        mock_sqlite_connect.return_value = mock_conn
+
+        # Mock the media uploader
+        mock_uploader = MagicMock()
+        mock_uploader.upload.return_value = "https://s3.private/generated.png"
+        daemon.MEDIA_UPLOADER = mock_uploader
+
+        with (
+            patch("daemon.send_typing_indicator_sync"),
+            patch("daemon.send_message_async") as mock_send_sms,
+        ):
+            msg = {
+                "message_handle": "handle_media",
+                "content": "Draw an image",
+                "from_number": daemon.USER_PHONE,
+            }
+            await daemon.process_message(msg)
+
+            # Verify the bot extracted the hidden media tag from state.db and sent it
+            mock_send_sms.assert_called_with(
+                "Normal text reply\nMEDIA: /tmp/generated.png"
+            )
+
+    @patch("daemon.asyncio.sleep")
+    @patch("daemon.send_typing_indicator_sync")
+    @patch("daemon.asyncio.create_subprocess_exec")
+    async def test_typing_indicator_timing(self, mock_exec, mock_typing, mock_sleep):
+        """
+        Tests Typing Indicator Latency (The Illusion of Presence).
+
+        ARCHITECTURAL CONTEXT:
+        SendBlue's `/api/send-typing-indicator` requires `from_number` or fails 400.
+        Do *not* calculate an artificial delay after generation to fake human typing.
+        Instead, fire the typing indicator immediately, `await asyncio.sleep(2.0)`, and
+        *then* start the LLM subprocess. This guarantees the bubble appears on the iPhone
+        before the instant reply arrives without blocking the LLM generation loop.
+        """
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (b"Hi", b"")
+        mock_exec.return_value = mock_proc
+
+        # We use a MagicMock to track order of execution
+        manager = MagicMock()
+        manager.attach_mock(mock_typing, "typing")
+        manager.attach_mock(mock_sleep, "sleep")
+        manager.attach_mock(mock_exec, "exec")
+
+        msg = {
+            "message_handle": "handle_timing",
+            "content": "hello",
+            "from_number": daemon.USER_PHONE,
+        }
+        await daemon.process_message(msg)
+
+        # Verify execution order: typing -> sleep -> subprocess
+        expected_calls = [
+            unittest.mock.call.typing(),
+            unittest.mock.call.sleep(2.0),
+            unittest.mock.call.exec(*mock_exec.call_args[0], **mock_exec.call_args[1]),
+        ]
+        manager.assert_has_calls(expected_calls, any_order=False)
+
+    def test_troubleshooting_queries(self):
+        """
+        Tests Production Troubleshooting Queries (Debugging).
+
+        ARCHITECTURAL CONTEXT:
+        When the daemon fails silently, developers rely on hardcoded raw SQL strings to debug.
+        `sqlite3 ~/.hermes/sendblue_daemon.db "SELECT message_handle, status, error_log FROM processed_messages WHERE status='failed' ..."`
+        We MUST ensure these specific query structures remain valid against the schema.
+        """
+        conn = sqlite3.connect(self.temp_db)
+        cur = conn.cursor()
+
+        # The specific debug query from the docs
+        try:
+            cur.execute(
+                "SELECT message_handle, status, error_log FROM processed_messages WHERE status='failed' ORDER BY created_at DESC LIMIT 5;"
+            )
+            rows = cur.fetchall()
+            self.assertEqual(len(rows), 0)
+        except sqlite3.OperationalError as e:
+            self.fail(f"Troubleshooting query is invalid against schema: {e}")
+
+    def test_architecture_boundaries(self):
+        """
+        Tests Core Architecture Boundaries (Detached vs Native).
+
+        ARCHITECTURAL CONTEXT:
+        There is a fatal flaw in Native Gateway Platforms: modifying core source code causes
+        git merge conflicts during `hermes update`. This daemon MUST remain a 100% detached,
+        update-safe polling script in `~/.hermes/plugins/`. It MUST NOT import from
+        `hermes-agent.gateway.platforms` or hook into the native framework directly.
+        """
+        daemon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "daemon.py")
+        )
+        with open(daemon_path, "r") as f:
+            content = f.read()
+
+        self.assertNotIn(
+            "from hermes_cli.gateway",
+            content,
+            "Daemon violates boundary by importing native gateway modules.",
+        )
+        self.assertNotIn(
+            "from agent",
+            content,
+            "Daemon violates boundary by importing core agent modules.",
+        )
 
 
 if __name__ == "__main__":
