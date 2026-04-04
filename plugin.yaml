@@ -1,5 +1,5 @@
 name: sendblue
-version: 0.1.0
+version: 0.1.5
 description: Sendblue iMessage / SMS integration. Provides typing indicators, async daemon routing, and Active LLM Tools for SMS dispatch.
 provides_hooks:
   - pre_llm_call
