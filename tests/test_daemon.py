@@ -46,6 +46,16 @@ class TestDaemon(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(daemon.mark_processing(handle, number))
 
     def test_session_management(self):
+        """
+        Tests the multi-tenant SQLite session isolation.
+
+        ARCHITECTURAL CONTEXT:
+        Do not use a single flat file (`sendblue_session.txt`) to store the current session ID.
+        If multiple people text the bot, their messages will all be piped into the exact same
+        Hermes session, causing the AI to hallucinate and leak information between conversations.
+        We MUST use the SQLite table `user_sessions(phone_number, session_id)` to map each
+        unique sender to their own isolated Hermes session.
+        """
         daemon.set_user_session("+12223334444", "test_sess_999")
         self.assertEqual(daemon.get_user_session("+12223334444"), "test_sess_999")
 
@@ -64,6 +74,15 @@ class TestDaemon(unittest.IsolatedAsyncioTestCase):
 
     @patch("daemon.asyncio.create_subprocess_exec")
     async def test_hermes_subprocess_injection(self, mock_create_subprocess_exec):
+        """
+        Tests that `--toolsets web` and `-Q` are always injected into the CLI subprocess.
+
+        ARCHITECTURAL CONTEXT:
+        If you do not pass `--toolsets web`, the agent will lack `browser_navigate`. When the
+        agent is prompted "You are running headlessly" and sees no browser tools, it will
+        hallucinate that headless environments cannot use the internet. You MUST explicitly
+        inject `--toolsets web` to prevent this bug.
+        """
         mock_proc = AsyncMock()
         mock_proc.communicate.return_value = (b"session_id: new_sess_888\n", b"")
         mock_create_subprocess_exec.return_value = mock_proc
@@ -85,6 +104,15 @@ class TestDaemon(unittest.IsolatedAsyncioTestCase):
             self.assertIn("-Q", call_args)
 
     async def test_security_filter(self):
+        """
+        Tests inbound RCE prevention via strict phone number gating.
+
+        ARCHITECTURAL CONTEXT:
+        Because Hermes can execute shell commands, the background daemon is effectively an
+        unauthenticated gateway to the local machine. We MUST explicitly check the incoming
+        `from_number` against an authorized `USER_PHONE` before handing the text to the Hermes
+        subprocess. Do not rely solely on the LLM's system prompt to prevent abuse.
+        """
         # Test that unauthorized numbers are ignored immediately
         msg = {
             "message_handle": "test_msg_hacker",
@@ -113,6 +141,15 @@ class TestDaemon(unittest.IsolatedAsyncioTestCase):
 
     @patch("daemon.asyncio.create_subprocess_exec")
     async def test_prefix_injection(self, mock_create_subprocess_exec):
+        """
+        Tests the hidden system prompt injection for headless execution.
+
+        ARCHITECTURAL CONTEXT:
+        The background daemon cannot interact with `prompt_toolkit` to stream interactive Y/n
+        approvals over SMS. If a dangerous command is triggered or if it uses the `clarify` tool,
+        the subprocess will hang permanently. The injected prefix explicitly bans interactive
+        tools while green-lighting read-only tasks proactively.
+        """
         mock_proc = AsyncMock()
         mock_proc.communicate.return_value = (b"", b"")
         mock_create_subprocess_exec.return_value = mock_proc
@@ -221,6 +258,15 @@ class TestDaemon(unittest.IsolatedAsyncioTestCase):
 
     @patch("daemon.update_status")
     async def test_media_download_size_limit(self, mock_update_status):
+        """
+        Tests OOM DOS prevention during media ingestion.
+
+        ARCHITECTURAL CONTEXT:
+        An attacker could send a 10GB media file via MMS. If we use `await resp.read()`, the
+        daemon will attempt to load the entire file into RAM, causing an Out-Of-Memory crash.
+        We MUST stream downloads asynchronously in chunks (`iter_chunked`) and strictly enforce
+        `MAX_MEDIA_SIZE_BYTES`, aborting immediately if the limit is exceeded.
+        """
         # We need to simulate aiohttp downloading a file that exceeds the size limit
         msg = {
             "message_handle": "test_msg_large_media",
