@@ -341,10 +341,11 @@ async def process_message(msg):
             # Inject prompt instruction alongside the prefix
             approval_prompt = """
 [System Context: The following message was received remotely via SMS/SendBlue.
-Because this is a headless remote session, you MUST NOT execute dangerous tools, write code, or modify files without explicit user approval.
-You MUST NOT use the `clarify` tool or any interactive terminal tools, as they will cause the headless subprocess to hang permanently. Format all questions as standard text replies.
-Instead, you must FIRST share a brief technical plan of what tools you intend to use and ask the user for confirmation.
-Wait for the user to reply "Yes" before executing the plan.]
+You are running headlessly: you MUST NOT use the `clarify` tool or any interactive terminal tools (they will hang the daemon).
+However, you HAVE full access to all standard tools (browser_navigate, execute_code, etc.). Use them PROACTIVELY and AUTOMATICALLY.
+Do NOT ask for permission, do NOT share "technical plans", and do NOT apologize for being headless.
+If the user asks you to check a website, read an audio file, or find information, just do it immediately using your tools.
+Only ask for confirmation if the user asks you to perform a highly destructive system action (like deleting databases). Keep your final text replies concise.]
 
 [via SendBlue] """
             content = approval_prompt + content
