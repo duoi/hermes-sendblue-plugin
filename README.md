@@ -26,7 +26,7 @@ Do **not** clone this into your Hermes source tree. Clone it directly into your 
 
 ```bash
 mkdir -p ~/.hermes/plugins/sendblue
-git clone https://github.com/duoi/hermes-sendblue-plugin.git ~/.hermes/plugins/sendblue
+git clone https://github.com/duoi/hermes-script-for-sendblue.git ~/.hermes/plugins/sendblue
 ```
 
 Verify the plugin is installed by running `hermes plugins list`. You should see `sendblue` enabled.
@@ -47,13 +47,14 @@ SENDBLUE_PHONE=+19876543210  # Your Sendblue phone number (E.164 format)
 ```env
 # Admins who are allowed to trigger Active LLM Tools (comma-separated). 
 # If empty, defaults to USER_PHONE.
-SENDBLUE_ADMIN_PHONES=+12345678901,+19876543210
+SENDBLUE_ADMIN_PHONES=+123****8901,+198****3210
+
+# Max inbound media size in Megabytes before dropping the file (prevents OOM DOS attacks)
+SENDBLUE_MAX_MEDIA_SIZE_MB=50
 
 # Prefix incoming SMS messages with "[via SendBlue]" in the AI's memory (default: true)
 SENDBLUE_PREFIX_ENABLED=true
 
-# A specific Hermes session ID to bind to initially (default: "new_session")
-INITIAL_SESSION_ID=20260403_020658_d765a7
 ```
 
 ### Optional: Secure Media Uploads (AWS S3 / Cloudflare R2)
@@ -83,7 +84,9 @@ This plugin operates via an **Isolated Asynchronous Polling Daemon**.
 Our daemon sits outside the Hermes core architecture. It uses `aiohttp` to poll Sendblue, and `asyncio.create_subprocess_exec` to invoke the standard `hermes` CLI command. 
 
 This guarantees:
-1. **Update Safety**: When you update Hermes Agent, this plugin will not cause merge conflicts or affect the gateway.
+1. **Update Safety**: When you update Hermes Agent, this plugin will not cause merge conflicts or affect the core gateway.
 2. **True Concurrency**: If the AI takes 60 seconds to execute a complex web-scraping tool, the daemon does not block. It continues processing incoming webhooks and queuing messages.
-3. **Idempotency**: All processed message IDs are tracked in a Write-Ahead Logging (WAL) SQLite database (`~/.hermes/sendblue_daemon.db`), guaranteeing a message is never processed twice even if the daemon crashes mid-execution.
-
+3. **Multi-Tenant State Isolation**: Instead of a flat file, the daemon uses a SQLite database to map incoming phone numbers to distinct Hermes Session IDs. If multiple authorized users text the bot, their conversations and context are strictly isolated.
+4. **Idempotency**: All processed message IDs are tracked in a Write-Ahead Logging (WAL) SQLite database (`~/.hermes/sendblue_daemon.db`), guaranteeing a message is never processed twice even if the daemon crashes mid-execution.
+5. **Denial of Service Prevention**: Large inbound media files (like 4K video) are ingested via chunked asynchronous streams and capped at 50MB. This prevents malicious actors from triggering Out-Of-Memory (OOM) crashes by sending massive files.
+6. **Strict RBAC Gating**: All inbound messages are explicitly verified against the `USER_PHONE` environment variable *before* resources are allocated. Unauthorized incoming messages are silently dropped, preventing Remote Code Execution via SMS.
