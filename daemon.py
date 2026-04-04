@@ -292,7 +292,7 @@ def send_typing_indicator_sync():
             json={"number": USER_PHONE, "from_number": SENDBLUE_PHONE},
             timeout=3,
         )
-    except:
+    except Exception:
         pass
 
 
@@ -476,7 +476,7 @@ Wait for the user to reply "Yes" before executing the plan.]
                                 if "media_tag" in data:
                                     final_response += "\n" + data["media_tag"]
                                     break
-                            except:
+                            except Exception:
                                 match = re.search(r'MEDIA:[^\s"]+', trow[0])
                                 if match:
                                     final_response += "\n" + match.group(0)
