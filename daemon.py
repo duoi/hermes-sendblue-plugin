@@ -121,7 +121,7 @@ def get_user_session(phone_number):
         get_hermes_bin(),
         "chat",
         "--toolsets",
-        "web",
+        "hermes-cli",
         "-Q",
         "-q",
         "Initializing Sendblue daemon session.",
@@ -395,7 +395,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
                 get_hermes_bin(),
                 "chat",
                 "--toolsets",
-                "web",
+                "hermes-cli",
                 "-Q",
                 "-q",
                 "Hello! This is a brand new session. What's up?",
@@ -431,7 +431,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
             current_session,
             "--yolo",
             "--toolsets",
-            "web",
+            "hermes-cli",
             "-Q",
             "-q",
             content,
@@ -460,7 +460,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
                 current_session,
                 "--yolo",
                 "--toolsets",
-                "web",
+                "hermes-cli",
                 "-Q",
                 "-q",
                 content,
@@ -522,7 +522,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
             # Fallback to parsing stdout
             output_lines = []
             for line in stdout.decode().splitlines():
-                line = re.sub(r"\x1B(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])", "", line)
+                line = re.sub(r"\x1B(?:[@-Z\-_]|\\[[0-?]*[ -/]*[@-~])", "", line)
                 if (
                     "session_id:" in line
                     or "🧠" in line
@@ -537,7 +537,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
 
         # Always scan STDOUT for media tags since they are not stored in the DB text column
         for line in stdout.decode().splitlines():
-            clean_line = re.sub(r"\x1B(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])", "", line)
+            clean_line = re.sub(r"\x1B(?:[@-Z\-_]|\\[[0-?]*[ -/]*[@-~])", "", line)
             if "MEDIA:" in clean_line:
                 final_response += "\n" + clean_line.strip()
 
