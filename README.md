@@ -26,7 +26,7 @@ Do **not** clone this into your Hermes source tree. Clone it directly into your 
 
 ```bash
 mkdir -p ~/.hermes/plugins/sendblue
-git clone https://github.com/duoi/hermes-script-for-sendblue.git ~/.hermes/plugins/sendblue
+git clone https://github.com/duoi/hermes-sendblue-plugin.git ~/.hermes/plugins/sendblue
 ```
 
 Verify the plugin is installed by running `hermes plugins list`. You should see `sendblue` enabled.
