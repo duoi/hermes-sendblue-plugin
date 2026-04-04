@@ -306,28 +306,31 @@ Wait for the user to reply "Yes" before executing the plan.]
                 conn.execute("PRAGMA journal_mode=WAL;")
                 c = conn.cursor()
                 # Use role = 'assistant' to prevent echoing user input back on crash
-                c.execute("SELECT content FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", (current_session,))
+                c.execute("SELECT id, content FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", (current_session,))
                 row = c.fetchone()
-                if row and row[0]:
-                    final_response = row[0].strip()
+                if row and row[1]:
+                    final_response = row[1].strip()
+                    ast_id = row[0]
                     
-                # Scan recent tool outputs for media tags
-                c.execute("SELECT content FROM messages WHERE session_id = ? AND role = 'tool' ORDER BY id DESC LIMIT 3", (current_session,))
-                for trow in c.fetchall():
-                    if "MEDIA:" in trow[0]:
-                        try:
-                            # It's JSON, try to extract media_tag
-                            import json
-                            data = json.loads(trow[0])
-                            if "media_tag" in data:
-                                final_response += "\n" + data["media_tag"]
-                                break
-                        except:
-                            # Fallback regex if it's not json
-                            match = re.search(r'MEDIA:[^\s"]+', trow[0])
-                            if match:
-                                final_response += "\n" + match.group(0)
-                                break
+                    # Scan recent tool outputs for media tags that were generated DURING this specific response turn
+                    c.execute("SELECT id FROM messages WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1", (current_session, ast_id))
+                    user_row = c.fetchone()
+                    user_id = user_row[0] if user_row else 0
+                    
+                    c.execute("SELECT content FROM messages WHERE session_id = ? AND role = 'tool' AND id > ? AND id < ? ORDER BY id DESC", (current_session, user_id, ast_id))
+                    for trow in c.fetchall():
+                        if "MEDIA:" in trow[0]:
+                            try:
+                                import json
+                                data = json.loads(trow[0])
+                                if "media_tag" in data:
+                                    final_response += "\n" + data["media_tag"]
+                                    break
+                            except:
+                                match = re.search(r'MEDIA:[^\s"]+', trow[0])
+                                if match:
+                                    final_response += "\n" + match.group(0)
+                                    break
                 conn.close()
         except Exception as e:
             print("DB fetch failed:", e)
