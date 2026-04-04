@@ -82,13 +82,13 @@ class TestDaemon(unittest.IsolatedAsyncioTestCase):
     @patch("daemon.asyncio.create_subprocess_exec")
     async def test_hermes_subprocess_injection(self, mock_create_subprocess_exec):
         """
-        Tests that `--toolsets web` and `-Q` are always injected into the CLI subprocess.
+        Tests that `--toolsets hermes-cli` and `-Q` are always injected into the CLI subprocess.
 
         ARCHITECTURAL CONTEXT:
-        If you do not pass `--toolsets web`, the agent will lack `browser_navigate`. When the
+        If you do not pass `--toolsets hermes-cli`, the agent will lack `browser_navigate`. When the
         agent is prompted "You are running headlessly" and sees no browser tools, it will
         hallucinate that headless environments cannot use the internet. You MUST explicitly
-        inject `--toolsets web` to prevent this bug.
+        inject `--toolsets hermes-cli` to prevent this bug.
         """
         mock_proc = AsyncMock()
         mock_proc.communicate.return_value = (b"session_id: new_sess_888\n", b"")
@@ -107,7 +107,7 @@ class TestDaemon(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(mock_create_subprocess_exec.called)
             call_args = mock_create_subprocess_exec.call_args[0]
             self.assertIn("--toolsets", call_args)
-            self.assertIn("web", call_args)
+            self.assertIn("hermes-cli", call_args)
             self.assertIn("-Q", call_args)
 
     async def test_security_filter(self):
