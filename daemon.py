@@ -100,7 +100,25 @@ def get_current_session():
     sf = os.path.expanduser("~/.hermes/sendblue_session.txt")
     if os.path.exists(sf):
         with open(sf, "r") as f:
-            return f.read().strip()
+            val = f.read().strip()
+            if val:
+                return val
+    
+    # Auto-initialize a valid session if missing
+    print("--> No valid session found, initializing a new one...")
+    import subprocess
+    cmd = [get_hermes_bin(), "chat", "-Q", "-q", "Initializing Sendblue daemon session."]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        for line in proc.stdout.splitlines():
+            if "session_id:" in line:
+                new_session = line.split("session_id:")[1].strip()
+                with open(sf, "w") as f:
+                    f.write(new_session)
+                return new_session
+    except Exception as e:
+        print("Failed to auto-initialize session:", e)
+        
     return INITIAL_SESSION_ID
 
 def set_current_session(session_id):
@@ -251,6 +269,7 @@ async def process_message(msg):
             approval_prompt = """
 [System Context: The following message was received remotely via SMS/SendBlue.
 Because this is a headless remote session, you MUST NOT execute dangerous tools, write code, or modify files without explicit user approval.
+You MUST NOT use the `clarify` tool or any interactive terminal tools, as they will cause the headless subprocess to hang permanently. Format all questions as standard text replies.
 Instead, you must FIRST share a brief technical plan of what tools you intend to use and ask the user for confirmation.
 Wait for the user to reply "Yes" before executing the plan.]
 
@@ -298,6 +317,17 @@ Wait for the user to reply "Yes" before executing the plan.]
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
         stdout, stderr = await proc.communicate()
         
+        # If the session was invalid/deleted, Hermes will print "Session not found"
+        stderr_text = stderr.decode()
+        if "Session not found" in stderr_text or "Session not found" in stdout.decode():
+            print("--> Session was invalid/deleted. Auto-resetting and retrying...")
+            sf = os.path.expanduser("~/.hermes/sendblue_session.txt")
+            if os.path.exists(sf): os.remove(sf)
+            current_session = get_current_session()
+            cmd = [get_hermes_bin(), "chat", "--resume", current_session, "--yolo", "-Q", "-q", content]
+            proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
+            stdout, stderr = await proc.communicate()
+            
         final_response = "Done."
         try:
             db_path = os.path.expanduser("~/.hermes/state.db")
