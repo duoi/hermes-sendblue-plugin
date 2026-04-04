@@ -67,24 +67,10 @@ def init_db():
         error_log TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
-
-    # Migrate old text file if it exists
-    txt_path = os.path.expanduser("~/.hermes/sendblue_processed.txt")
-    if os.path.exists(txt_path):
-        with open(txt_path, "r") as f:
-            for line in f:
-                handle = line.strip()
-                if handle:
-                    try:
-                        conn.execute(
-                            "INSERT INTO processed_messages (message_handle, status) VALUES (?, 'completed')",
-                            (handle,),
-                        )
-                    except sqlite3.IntegrityError:
-                        pass
-        os.rename(txt_path, txt_path + ".migrated")
-        print("Migrated old processed.txt to database.")
-
+    conn.execute("""CREATE TABLE IF NOT EXISTS user_sessions (
+        phone_number TEXT PRIMARY KEY,
+        session_id TEXT
+    )""")
     conn.commit()
     conn.close()
 
@@ -114,19 +100,24 @@ def update_status(handle, status, error=None):
     conn.close()
 
 
-def get_current_session():
-    sf = os.path.expanduser("~/.hermes/sendblue_session.txt")
-    if os.path.exists(sf):
-        with open(sf, "r") as f:
-            val = f.read().strip()
-            if val:
-                return val
+def get_user_session(phone_number):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT session_id FROM user_sessions WHERE phone_number = ?", (phone_number,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    if row and row[0]:
+        return row[0]
 
     # Auto-initialize a valid session if missing
-    print("--> No valid session found, initializing a new one...")
+    print(f"--> No valid session found for {phone_number}. Initializing a new one...")
     cmd = [
         get_hermes_bin(),
         "chat",
+        "--toolsets",
+        "web",
         "-Q",
         "-q",
         "Initializing Sendblue daemon session.",
@@ -136,19 +127,23 @@ def get_current_session():
         for line in proc.stdout.splitlines():
             if "session_id:" in line:
                 new_session = line.split("session_id:")[1].strip()
-                with open(sf, "w") as f:
-                    f.write(new_session)
+                set_user_session(phone_number, new_session)
                 return new_session
     except Exception as e:
-        print("Failed to auto-initialize session:", e)
+        print(f"Failed to initialize session: {e}")
 
     return INITIAL_SESSION_ID
 
 
-def set_current_session(session_id):
-    sf = os.path.expanduser("~/.hermes/sendblue_session.txt")
-    with open(sf, "w") as f:
-        f.write(session_id)
+def set_user_session(phone_number, session_id):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT OR REPLACE INTO user_sessions (phone_number, session_id) VALUES (?, ?)",
+        (phone_number, session_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 # Media Uploader Abstraction
@@ -305,6 +300,11 @@ async def process_message(msg):
     media_url = msg.get("media_url")
     number = msg.get("from_number")
 
+    # Security: Only process messages from the authorized USER_PHONE
+    if number != USER_PHONE:
+        print(f"--> Ignoring message from unauthorized number: {number}")
+        return
+
     # Idempotent DB lock
     if not mark_processing(handle, number):
         return
@@ -362,7 +362,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
         # Guarantee the typing indicator is visible for at least 2 seconds before instant replies
         await asyncio.sleep(2.0)
 
-        current_session = get_current_session()
+        current_session = get_user_session(number)
 
         # Session reset
         if content.lower() in ["/new", "reset"]:
@@ -370,6 +370,8 @@ Do not apologize for being headless. Keep your final text replies concise.]
             cmd = [
                 get_hermes_bin(),
                 "chat",
+                "--toolsets",
+                "web",
                 "-Q",
                 "-q",
                 "Hello! This is a brand new session. What's up?",
@@ -385,7 +387,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
                     new_session = line.split("session_id:")[1].strip()
 
             if new_session:
-                set_current_session(new_session)
+                set_user_session(number, new_session)
                 await send_message_async(f"Started a new session: {new_session}")
                 update_status(handle, "completed")
             else:
@@ -404,6 +406,8 @@ Do not apologize for being headless. Keep your final text replies concise.]
             "--resume",
             current_session,
             "--yolo",
+            "--toolsets",
+            "web",
             "-Q",
             "-q",
             content,
@@ -423,13 +427,15 @@ Do not apologize for being headless. Keep your final text replies concise.]
             sf = os.path.expanduser("~/.hermes/sendblue_session.txt")
             if os.path.exists(sf):
                 os.remove(sf)
-            current_session = get_current_session()
+            current_session = get_user_session(number)
             cmd = [
                 get_hermes_bin(),
                 "chat",
                 "--resume",
                 current_session,
                 "--yolo",
+                "--toolsets",
+                "web",
                 "-Q",
                 "-q",
                 content,
@@ -531,7 +537,7 @@ async def run():
 
     print("Starting Sendblue SMS <-> Hermes CLI Daemon...")
     print(f"Monitoring messages from {USER_PHONE}")
-    print(f"Attached to Session: {get_current_session()}")
+    print("Ready to attach sessions per-user.")
     print("Press Ctrl+C to stop.")
 
     import aiohttp
