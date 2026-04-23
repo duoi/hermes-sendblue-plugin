@@ -43,7 +43,11 @@ for path in [env_path, plugin_env_path]:
 
 API_KEY = os.environ.get("SENDBLUE_API_KEY")
 API_SECRET = os.environ.get("SENDBLUE_API_SECRET")
-USER_PHONE = os.environ.get("USER_PHONE")
+USER_PHONES = [
+    p.strip() for p in os.environ.get("USER_PHONE", "").split(",") if p.strip()
+]
+USER_PHONE = USER_PHONES[0] if USER_PHONES else None
+SENDBLUE_TOOLSETS = os.environ.get("SENDBLUE_TOOLSETS", "hermes-cli")
 MAX_MEDIA_SIZE_BYTES = (
     int(os.environ.get("SENDBLUE_MAX_MEDIA_SIZE_MB", 50)) * 1024 * 1024
 )
@@ -121,14 +125,15 @@ def get_user_session(phone_number):
         get_hermes_bin(),
         "chat",
         "--toolsets",
-        "hermes-cli",
+        SENDBLUE_TOOLSETS,
         "-Q",
         "-q",
         "Initializing Sendblue daemon session.",
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True)
-        for line in proc.stdout.splitlines():
+        combined = proc.stdout + "\n" + proc.stderr
+        for line in combined.splitlines():
             if "session_id:" in line:
                 new_session = line.split("session_id:")[1].strip()
                 set_user_session(phone_number, new_session)
@@ -215,7 +220,7 @@ class MediaUploader:
 MEDIA_UPLOADER = None
 
 
-async def send_message_async(text: str):
+async def send_message_async(text: str, number: str):
     import aiohttp
 
     url = "https://api.sendblue.co/api/send-message"
@@ -269,7 +274,7 @@ async def send_message_async(text: str):
     # Safe truncation (1500 bytes max payload)
     text = text.encode("utf-8")[:1490].decode("utf-8", "ignore")
 
-    data = {"number": USER_PHONE, "content": text, "from_number": SENDBLUE_PHONE}
+    data = {"number": number, "content": text, "from_number": SENDBLUE_PHONE}
     if media_url:
         data["media_url"] = media_url
 
@@ -277,7 +282,7 @@ async def send_message_async(text: str):
         await session.post(url, headers=headers, json=data)
 
 
-def send_typing_indicator_sync():
+def send_typing_indicator_sync(number):
     url = "https://api.sendblue.co/api/send-typing-indicator"
     headers = {
         "sb-api-key-id": API_KEY,
@@ -288,7 +293,7 @@ def send_typing_indicator_sync():
         requests.post(
             url,
             headers=headers,
-            json={"number": USER_PHONE, "from_number": SENDBLUE_PHONE},
+            json={"number": number, "from_number": SENDBLUE_PHONE},
             timeout=3,
         )
     except Exception:
@@ -304,13 +309,13 @@ async def process_message(msg):
     media_url = msg.get("media_url")
     number = msg.get("from_number")
 
-    # Security: Only process messages from the authorized USER_PHONE
-    if number != USER_PHONE:
-        print(f"--> Ignoring message from unauthorized number: {number}")
-        return
-
     # Idempotent DB lock
     if not mark_processing(handle, number):
+        return
+
+    # Security: Only process messages from the authorized USER_PHONE
+    if number not in USER_PHONES:
+        print(f"--> Ignoring message from unauthorized number: {number}")
         return
 
     try:
@@ -381,7 +386,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
 
         # Fire initial typing indicator
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, send_typing_indicator_sync)
+        await loop.run_in_executor(None, send_typing_indicator_sync, number)
 
         # Guarantee the typing indicator is visible for at least 2 seconds before instant replies
         await asyncio.sleep(2.0)
@@ -395,7 +400,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
                 get_hermes_bin(),
                 "chat",
                 "--toolsets",
-                "hermes-cli",
+                SENDBLUE_TOOLSETS,
                 "-Q",
                 "-q",
                 "Hello! This is a brand new session. What's up?",
@@ -403,26 +408,29 @@ Do not apologize for being headless. Keep your final text replies concise.]
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
-            stdout, _ = await proc.communicate()
+            stdout, stderr = await proc.communicate()
+            combined = stdout.decode() + "\n" + stderr.decode()
 
             new_session = None
-            for line in stdout.decode().splitlines():
+            for line in combined.splitlines():
                 if "session_id:" in line:
                     new_session = line.split("session_id:")[1].strip()
 
             if new_session:
                 set_user_session(number, new_session)
-                await send_message_async(f"Started a new session: {new_session}")
+                await send_message_async(
+                    f"Started a new session: {new_session}", number
+                )
                 update_status(handle, "completed")
             else:
-                await send_message_async("Failed to create new session.")
+                await send_message_async("Failed to create new session.", number)
                 update_status(handle, "failed", "failed to create session")
             return
 
         print(f"--> Sending to Hermes (Session: {current_session})")
 
         env = os.environ.copy()
-        env["SENDBLUE_ACTIVE_USER_PHONE"] = USER_PHONE
+        env["SENDBLUE_ACTIVE_USER_PHONE"] = number
 
         cmd = [
             get_hermes_bin(),
@@ -431,7 +439,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
             current_session,
             "--yolo",
             "--toolsets",
-            "hermes-cli",
+            SENDBLUE_TOOLSETS,
             "-Q",
             "-q",
             content,
@@ -460,7 +468,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
                 current_session,
                 "--yolo",
                 "--toolsets",
-                "hermes-cli",
+                SENDBLUE_TOOLSETS,
                 "-Q",
                 "-q",
                 content,
@@ -546,7 +554,7 @@ Do not apologize for being headless. Keep your final text replies concise.]
 
         print(f"--> Replying: {final_response[:50]}...")
 
-        await send_message_async(final_response)
+        await send_message_async(final_response, number)
         update_status(handle, "completed")
 
     except Exception as e:
@@ -561,7 +569,7 @@ async def run():
     MEDIA_UPLOADER = MediaUploader()
 
     print("Starting Sendblue SMS <-> Hermes CLI Daemon...")
-    print(f"Monitoring messages from {USER_PHONE}")
+    print(f"Monitoring messages from {', '.join(USER_PHONES)}")
     print("Ready to attach sessions per-user.")
     print("Press Ctrl+C to stop.")
 
