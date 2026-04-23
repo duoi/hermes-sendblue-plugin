@@ -7,6 +7,7 @@ This plugin allows you to text a designated Sendblue number and have Hermes proc
 ## 🚀 Features
 
 - **Stateful Threading**: Hermes maintains conversation state. You can have multi-turn conversations over SMS/iMessage just like you do in the terminal.
+- **Multi-User Support**: Configure multiple authorized phone numbers. The daemon isolates conversation state per user and routes replies back to the correct sender automatically.
 - **Active LLM Tools**: The AI is equipped with `sendblue_send_message` and `sendblue_list_messages`. You can instruct the AI to proactively text other people autonomously.
 - **Admin-Gated Security**: Active tools are restricted out-of-the-box. They will only execute if the AI is communicating with an explicitly authorized admin phone number.
 - **Interactive Command Approvals over SMS**: Because this is a headless remote session, if the AI attempts to execute a dangerous terminal command or modify files, it is explicitly instructed via a silent prompt to text you a "Technical Plan" first and wait for you to reply "Yes" before proceeding.
@@ -39,15 +40,19 @@ The daemon and plugin look for environment variables in the system environment, 
 ```env
 SENDBLUE_API_KEY=your_sendblue_api_key_here
 SENDBLUE_API_SECRET=your_sendblue_api_secret_here
-USER_PHONE=+12345678901      # Your personal phone number (E.164 format)
-SENDBLUE_PHONE=+19876543210  # Your Sendblue phone number (E.164 format)
+USER_PHONE=+12345678901,+12345678902   # Comma-separated list of authorized phone numbers (E.164 format)
+SENDBLUE_PHONE=+19876543210            # Your Sendblue phone number (E.164 format)
 ```
 
 ### Optional Configuration
 ```env
-# Admins who are allowed to trigger Active LLM Tools (comma-separated). 
-# If empty, defaults to USER_PHONE.
-SENDBLUE_ADMIN_PHONES=+123****8901,+198****3210
+# Admins who are allowed to trigger Active LLM Tools (comma-separated).
+# If empty, defaults to the full USER_PHONE list.
+SENDBLUE_ADMIN_PHONES=+12345678901,+12345678902
+
+# Toolsets to inject into each Hermes session invoked by the daemon (comma-separated).
+# If empty, defaults to "hermes-cli".
+SENDBLUE_TOOLSETS=hermes-cli,mcp-sendblue_api
 
 # Max inbound media size in Megabytes before dropping the file (prevents OOM DOS attacks)
 SENDBLUE_MAX_MEDIA_SIZE_MB=50
