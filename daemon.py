@@ -7,6 +7,7 @@ import requests
 import re
 import sqlite3
 import shutil
+from datetime import datetime, timezone
 
 
 def get_hermes_bin():
@@ -368,8 +369,11 @@ async def process_message(msg):
         )
         if prefix_enabled and not content.startswith("/"):
             # Inject prompt instruction alongside the prefix
-            approval_prompt = """
-[System Context: The following message was received remotely via SMS/SendBlue.
+            now = datetime.now(timezone.utc)
+            request_ts = msg.get("date_sent", "unknown")
+            approval_prompt = f"""[System Context: The following message was received remotely via SMS/SendBlue.
+Current server time: {now.isoformat()} (UTC)
+Request timestamp: {request_ts}
 You are running headlessly: you MUST NOT use the `clarify` tool or any interactive terminal tools (they will hang the daemon).
 
 Execution Rules:
