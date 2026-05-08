@@ -279,8 +279,20 @@ async def send_message_async(text: str, number: str):
     if media_url:
         data["media_url"] = media_url
 
+    print(
+        f"[DEBUG] Sending message: from={SENDBLUE_PHONE}, to={number}, text_len={len(text)}"
+    )
+    print(f"[DEBUG] Payload dict: {data}")
+    import json
+
+    print(f"[DEBUG] Payload json: {json.dumps(data)}")
+
     async with aiohttp.ClientSession() as session:
-        await session.post(url, headers=headers, json=data)
+        async with session.post(url, headers=headers, json=data) as resp:
+            body = await resp.text()
+            print(f"[DEBUG] Sendblue response: status={resp.status}, body={body[:200]}")
+            if resp.status >= 400:
+                print(f"[ERROR] Failed to send message: {body}")
 
 
 def send_typing_indicator_sync(number):
@@ -484,6 +496,18 @@ Do not apologize for being headless. Keep your final text replies concise.]
                 env=env,
             )
             stdout, stderr = await proc.communicate()
+
+        # Check if Hermes rolled over to a new session ID
+        combined = stdout.decode() + "\n" + stderr.decode()
+        for line in combined.splitlines():
+            if "session_id:" in line:
+                updated_session = line.split("session_id:")[1].strip()
+                if updated_session and updated_session != current_session:
+                    print(
+                        f"--> Session rolled over from {current_session} to {updated_session}"
+                    )
+                    current_session = updated_session
+                    set_user_session(number, current_session)
 
         final_response = "Done."
         try:
